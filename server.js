@@ -2,26 +2,24 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const { checkRecaptcha } = require('./utils/recaptcha');
+const { checkRecaptcha } = require('./recaptcha');
 require('dotenv').config();
 
-// Connect to MongoDB
 mongoose.connect('mongodb://localhost:27017/biddingWebsite', { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('MongoDB Connected'))
   .catch(err => console.log(err));
 
 const app = express();
 
-// Middlewares
 app.use(bodyParser.json());
-app.use(cors());
+app.use(require('cors')());
 
-// MongoDB Schema Definitions
+// Models
 const Item = mongoose.model('Item', new mongoose.Schema({
   name: { type: String, required: true },
   description: { type: String, required: true },
-  size: { type: String, required: true }, // Shoe size
-  images: [String],  // Array of image URLs
+  size: { type: String, required: true },
+  images: [String],
   currentBid: { type: Number, default: 0 },
   endTime: { type: Date, required: true },
 }));
@@ -33,21 +31,9 @@ const Bid = mongoose.model('Bid', new mongoose.Schema({
   status: { type: String, enum: ['pending', 'accepted', 'declined'], default: 'pending' },
 }));
 
-// Routes
-
-// Admin: Create a new auction item (Track Runner)
 app.post('/admin/createItem', async (req, res) => {
   const { name, description, size, images, endTime } = req.body;
-
-  // Create new item
-  const newItem = new Item({
-    name,
-    description,
-    size,
-    images,
-    endTime: new Date(endTime),  // Assuming endTime is passed in ISO string format
-  });
-
+  const newItem = new Item({ name, description, size, images, endTime: new Date(endTime) });
   try {
     await newItem.save();
     res.status(200).send('Item created successfully');
@@ -56,48 +42,32 @@ app.post('/admin/createItem', async (req, res) => {
   }
 });
 
-// Place a Bid (with reCAPTCHA validation)
 app.post('/placeBid', async (req, res) => {
   const { userId, itemId, amount, captchaResponse } = req.body;
-
-  // Validate CAPTCHA
   const isCaptchaValid = await checkRecaptcha(captchaResponse);
   if (!isCaptchaValid) return res.status(400).send("Invalid CAPTCHA");
 
   const item = await Item.findById(itemId);
   if (!item) return res.status(404).send("Item not found");
 
-  if (amount <= item.currentBid) {
-    return res.status(400).send("Bid is too low");
-  }
+  if (amount <= item.currentBid) return res.status(400).send("Bid is too low");
 
-  // Place the bid
-  const bid = new Bid({
-    userId,
-    itemId,
-    amount,
-    status: 'pending',
-  });
-
+  const bid = new Bid({ userId, itemId, amount, status: 'pending' });
   await bid.save();
 
-  // Update the current highest bid
   item.currentBid = amount;
   await item.save();
-
+  
   res.send("Bid placed successfully");
 });
 
-// Admin Approve/Decline Bid
 app.put('/admin/bid/:bidId', async (req, res) => {
-  const { action } = req.body;  // 'accept' or 'decline'
+  const { action } = req.body;
   const bid = await Bid.findById(req.params.bidId);
-
   if (!bid) return res.status(404).send("Bid not found");
 
   if (action === 'accept') {
     bid.status = 'accepted';
-    // Handle payment and notify the user
     await stripe.paymentIntents.create({
       amount: bid.amount * 100, // Convert to cents
       currency: 'usd',
@@ -111,7 +81,6 @@ app.put('/admin/bid/:bidId', async (req, res) => {
   res.send("Bid status updated");
 });
 
-// Payment API (to complete payment after a successful bid)
 app.post('/pay', async (req, res) => {
   const { paymentMethodId, bidId } = req.body;
   const bid = await Bid.findById(bidId);
@@ -127,20 +96,11 @@ app.post('/pay', async (req, res) => {
 
   if (paymentIntent.status === 'succeeded') {
     res.send("Payment successful");
-    // Notify you, the admin, to send the product
   } else {
     res.status(400).send("Payment failed");
   }
 });
 
-// Admin Dashboard (View and manage bids)
-app.get('/admin/dashboard', async (req, res) => {
-  const items = await Item.find();
-  const bids = await Bid.find().populate('itemId');
-  res.json({ items, bids });
-});
-
-// Start the Server
 app.listen(3000, () => {
   console.log('Server running on port 3000');
 });
