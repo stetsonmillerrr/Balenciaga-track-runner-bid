@@ -18,11 +18,12 @@ app.use(cors());
 
 // MongoDB Schema Definitions
 const Item = mongoose.model('Item', new mongoose.Schema({
-  name: String,
-  description: String,
-  images: [String],
+  name: { type: String, required: true },
+  description: { type: String, required: true },
+  size: { type: String, required: true }, // Shoe size
+  images: [String],  // Array of image URLs
   currentBid: { type: Number, default: 0 },
-  endTime: Date,
+  endTime: { type: Date, required: true },
 }));
 
 const Bid = mongoose.model('Bid', new mongoose.Schema({
@@ -33,6 +34,27 @@ const Bid = mongoose.model('Bid', new mongoose.Schema({
 }));
 
 // Routes
+
+// Admin: Create a new auction item (Track Runner)
+app.post('/admin/createItem', async (req, res) => {
+  const { name, description, size, images, endTime } = req.body;
+
+  // Create new item
+  const newItem = new Item({
+    name,
+    description,
+    size,
+    images,
+    endTime: new Date(endTime),  // Assuming endTime is passed in ISO string format
+  });
+
+  try {
+    await newItem.save();
+    res.status(200).send('Item created successfully');
+  } catch (err) {
+    res.status(500).send('Error creating item');
+  }
+});
 
 // Place a Bid (with reCAPTCHA validation)
 app.post('/placeBid', async (req, res) => {
@@ -80,7 +102,6 @@ app.put('/admin/bid/:bidId', async (req, res) => {
       amount: bid.amount * 100, // Convert to cents
       currency: 'usd',
       description: `Payment for item ${bid.itemId}`,
-      // Add payment method details from the user later
     });
   } else if (action === 'decline') {
     bid.status = 'declined';
